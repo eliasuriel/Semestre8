@@ -1,7 +1,7 @@
 import heapq
-import numpy as np
 import matplotlib.pyplot as plt
-from segundo_mapa import get_rrt_nodes,imagen_a_matriz,rrt,plot_map
+import random
+from segundo_mapa import get_rrt_nodes,imagen_a_matriz,rrt,plot_map,load_image
 
 class Node:
     def __init__(self, x, y):
@@ -13,81 +13,75 @@ class Node:
     def __lt__(self, other):
         return self.cost < other.cost
 
-class DijkstraAlgorithm:
-    def __init__(self, nodes):
+class PathPlanner:
+    def __init__(self, nodes, start_node, goal_node):
         self.nodes = nodes
+        self.start_node = start_node
+        self.goal_node = goal_node
+        self.start_node.cost = 0
 
-    def dijkstra(self, start_node):
-        start_node.cost = 0
+    def euclidean_distance(self, node1, node2):
+        return ((node1.x - node2.x)**2 + (node1.y - node2.y)**2)**0.5
+
+    def dijkstra(self):
+        pq = [(self.start_node.cost, self.start_node)]
         visited = set()
-        pq = [(start_node.cost, start_node)]
 
         while pq:
             current_cost, current_node = heapq.heappop(pq)
 
-            if current_node in visited:
-                continue
+            if current_node == self.goal_node:
+                path = []
+                node = current_node
+                while node:
+                    path.append(node)
+                    node = node.parent
+                return path[::-1]
 
             visited.add(current_node)
 
             for neighbor in self.nodes:
-                if neighbor == current_node.parent:
-                    continue
+                if neighbor not in visited:
+                    new_cost = current_cost + self.euclidean_distance(current_node, neighbor)
+                    if new_cost < neighbor.cost:
+                        neighbor.cost = new_cost
+                        neighbor.parent = current_node
+                        heapq.heappush(pq, (new_cost, neighbor))
 
-                dist_to_neighbor = np.sqrt((current_node.x - neighbor.x)**2 + (current_node.y - neighbor.y)**2)
-                new_cost = current_cost + dist_to_neighbor
-
-                if new_cost < neighbor.cost:
-                    neighbor.cost = new_cost
-                    neighbor.parent = current_node
-                    heapq.heappush(pq, (new_cost, neighbor))
-
+        return []
+    
 map_filename = "mapa2.png"  # Ruta de tu archivo de imagen
 map_matrix = imagen_a_matriz(map_filename)
 map_size = len(map_matrix[0])  # Tamaño de la matriz (se asume que es cuadrada)
 obstacles = []
 
 for y in range(len(map_matrix)):
-        for x in range(len(map_matrix[y])):
-            if map_matrix[y][x] == 1:  # Considerar los píxeles negros como obstáculos
-                obstacles.append((x, y))
+    for x in range(len(map_matrix[y])):
+        if map_matrix[y][x] == 1:  # Considerar los píxeles negros como obstáculos
+            obstacles.append((x, y))
 
 num_iterations = 300
 step_size = 0.5
 obstacle_clearance = 0.8
 
-nodes = get_rrt_nodes(map_size, obstacles, num_iterations, step_size, obstacle_clearance)
+# Después de obtener la lista de nodos con get_rrt_nodes()
+node_list = get_rrt_nodes(map_size, obstacles, num_iterations, step_size, obstacle_clearance)
+#print(len(node_list))
+start_node_x, start_node_y = 146, 61  # Coordenadas del nodo de inicio
+start_node = Node(start_node_x, start_node_y)
 
-# Ejecutar algoritmo de Dijkstra
-algorithm = DijkstraAlgorithm(nodes)
-start_node = nodes[0]  # Nodo de inicio
-algorithm.dijkstra(start_node)
+# Asignar los nodos de inicio y destino
+#start_node = node_list[0]  # Asumiendo que el primer nodo es el nodo de inicio
+numero_random = random.randint(0, len(node_list))
+goal_node = node_list[numero_random]  # Definir las coordenadas del nodo de destino
 
-
-
-#plot_map(map_size, obstacles, algorithm.dijkstra(start_node))
-
-
-# Mostrar los resultados
-for node in nodes:
-    path_cost = node.cost
-    path = [node]
-    current_node = node
-    while current_node.parent:
-        path.append(current_node.parent)
-        current_node = current_node.parent
-    path.reverse()
-    print(f"Nodo ({node.x}, {node.y}): Costo del camino mas corto = {path_cost}, Ruta = {[n.x for n in path]}")
-
-# Visualización de nodos y conexiones
-plt.figure(figsize=(6, 6))
-for node in nodes:
-    plt.scatter(node.x, node.y, color='blue')
-    #plt.text(node.x + 0.05, node.y + 0.05, f'({node.x}, {node.y})')
-    if node.parent:
-        plt.plot([node.x, node.parent.x], [node.y, node.parent.y], color='gray')
-plt.title('Grafo con nodos y conexiones')
-plt.xlabel('X')
-plt.ylabel('Y')
-plt.grid(True)
-plt.show()
+path_planner = PathPlanner(node_list, start_node, goal_node)
+shortest_path = path_planner.dijkstra()
+print(goal_node)
+plot_map(map_size, obstacles, node_list, shortest_path)
+if shortest_path:
+    print("Ruta mas corta encontrada:")
+    for node in shortest_path:
+        print(f"({node.x}, {node.y})")
+else:
+    print("No se encontro una ruta valida.")
