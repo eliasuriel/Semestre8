@@ -67,6 +67,8 @@ class StateMachine:
             elif self.state == "NAVEGACION":
                 if self.manual_detected:
                     self.state = "MANUAL"
+                elif self.person_detected:
+                    self.state = "ALERTA2"
                 elif self.sound_detected:
                     self.state = "ALERTA1"
                 self.navegacion()
