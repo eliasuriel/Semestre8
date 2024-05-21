@@ -112,7 +112,7 @@ class StateMachine:
     def random_move_quadrant(self, quadrants):
         num_quadrant = len(quadrants)
         arr_quadrant = []
-        while True:
+        while len(arr_quadrant) < num_quadrant:
             num_aleatorio = random.randint(0,num_quadrant-1)  
             if quadrants[num_aleatorio] == arr_quadrant:
                 continue
@@ -129,8 +129,7 @@ class StateMachine:
                 if tiempo_f >= 30:
                     continue
 
-                if len(arr_quadrant) == num_quadrant:
-                    break
+                
 
     def move_to_quadrant(self, quadrant):
         # Implementa aquí la lógica para moverse al cuadrante específico
