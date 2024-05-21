@@ -1,119 +1,168 @@
-#!/usr/bin/env python
-import rospy
-from std_msgs.msg import String
-from geometry_msgs import *
-from nav_msgs import *
-#from rover_slam import *
-from sensor_msgs import *
-import smach
-import smach_ros
+#!/usr/bin/env python3
 
+# Python libraries
+import rospy
+import random
+import time
+# ROS messages
+from std_msgs.msg import Bool, Int8
+
+# Rover packages
+from classes_movement import Rover_Navigation, Controller
+from classes_slam import Map_Sections, PRM, Dijkstra_Path
+from classes_sensors import Joystick
 
 class StateMachine:
-    def __init__(self):
-        rospy.init_node("Maquina_estados_py")
-        
-        self.state = "EXPLORACION"
-        
-        self.sound_subscriber = rospy.Subscriber("/sound_sensor", bool, self.sound_callback)
-        self.detect_subscriber = rospy.Subscriber("/detect_person", bool, self.image_callback)
-        self.map_subscriber = rospy.Subscriber("/map", bool, self.map_callback)
-        self._manual_subscriber = rospy.Subscriber("/manual", bool, self.manual_callback)
+    def __init__(self) -> None:
+        self.__state = "EXPLORATION"
+        self.__map = False
+        self.__sound = False
+        self.__person = False
+        self.__manual_mode = False
+        self.__current_quadrant = None
+        self.__last_quadrant_time = None
 
+        self.__nav = Rover_Navigation()
+        self.__control = Controller()
+        self.__joystick = Joystick()
 
-        self.map_built = False
-        self.sound_detected = False
-        self.person_detected = False
-        self.manual_detected = False
+        self.__buzzer_pub = rospy.Publisher("/buzzer", Int8, queue_size = 10)
 
-    def manual_callback(self, msg:bool) -> None:
-        # Lógica para determinar si se ha detectado un sonido
-        if msg == True:
-            self.manual_detected = True
-        else:
-            self.manual_detected = False
+        rospy.Subscriber("/detected/sound", Bool, self.__sound_callback)
+        rospy.Subscriber("/detected/person", Bool, self.__person_callback)
+        rospy.Subscriber("/map_ready", Bool, self.__map_ready_callback)
+        rospy.Subscriber("/manual_mode", Bool, self.__manual_callback)
 
-    def sound_callback(self, msg:bool) -> None:
-        # Lógica para determinar si se ha detectado un sonido
-        if msg == True:
-            self.sound_detected = True
-        else:
-            self.sound_detected = False
+    def __manual_callback(self, msg:bool) -> None:
+        self.__manual_mode = msg.data
 
-    def image_callback(self, msg:bool) -> None:
-        # Lógica para determinar si se ha detectado una persona
-        if msg == True:
-            self.person_detected = True
-        else:
-            self.person_detected = False
+    def __sound_callback(self, msg:bool) -> None:
+        self.__sound = msg.data
 
+    def __person_callback(self, msg:bool) -> None:
+        self.__person = msg.data
 
-    def map_callback(self,msg:bool) -> None:
-        # Lógica para determinar si el mapa está construido
-        if msg == True:
-            self.map_built = True
-        else:
-            self.map_built = False
-        
+    def __map_ready_callback(self,msg:bool) -> None:
+        self.__map = msg.data
 
     def run(self):
-        rate = rospy.Rate(10)  # 10 Hz
-        while not rospy.is_shutdown():
-            if self.state == "EXPLORACION":
-                if self.map_built:
-                    self.state = "NAVEGACION"
-                self.exploracion()
-            
-            elif self.state == "NAVEGACION":
-                if self.manual_detected:
-                    self.state = "MANUAL"
-                elif self.person_detected:
-                    self.state = "ALERTA2"
-                elif self.sound_detected:
-                    self.state = "ALERTA1"
-                self.navegacion()
-            
-            elif self.state == "MANUAL":
-                if self.manual_detected == False:
-                    self.state = "NAVEGACION"
-                self.manual()
+        if self.__state == "EXPLORATION":
+            if self.__map:
+                self.__nav.stop()
+                self.__move_to_navegation()
+                self.__state = "NAVIGATION"
+                rospy.loginfo("State: NAVIGATION - Navigating...")
+            self.__exploration()
 
-            elif self.state == "ALERTA1":
-                if self.person_detected:
-                    self.state = "ALERTA2"
-                elif not self.sound_detected:
-                    self.state = "NAVEGACION"
-                self.alerta1()
-            
-            elif self.state == "ALERTA2":
-                self.alerta2()
-            
-            rate.sleep()
+        elif self.__state == "NAVIGATION":
 
-    def exploracion(self):
-        rospy.loginfo("Estado: EXPLORACION - Construyendo el mapa...")
-        # Lógica de exploración para construir el mapa
-        pass
+            if self.__manual_mode:
+                self.__nav.stop()
+                self.__state = "MANUAL"
+                rospy.loginfo("State: MANUAL - Use the joystick for moving the rover...")
+            elif self.__person:
+                self.__state = "ALERT2"
+                rospy.loginfo("State: ALERT2 - Person detected")
+            elif self.__sound:
+                self.__buzzer_pub.publish(1)
+                self.__state = "ALERT1"
+                rospy.loginfo("State: ALERT1 - Sound detected, investigating...")
+            self.__navigation()
 
-    def navegacion(self):
-        rospy.loginfo("Estado: NAVEGACION - Navegando...")
-        # Lógica de navegación
-        pass
+        elif self.__state == "MANUAL":
+            if not self.__manual_mode:
+                self.__state = "NAVIGATION"
+                rospy.loginfo("State: NAVIGATION - Navigating...")
+            self.__manual()
 
-    def manual(self):
-        rospy.loginfo("Estado: MANUAL - Manual...")
-        pass
+        elif self.__state == "ALERT1":
+            if self.__person:
+                self.__state = "ALERT2"
+                rospy.loginfo("State: ALERT2 - Person detected")
+            self.__alert1()
+        
+        elif self.__state == "ALERT2":
+            self.__alert2()
 
-    def alerta1(self):
-        rospy.loginfo("Estado: ALERTA1 - Sonido detectado, investigando...")
-        # Lógica para manejar la alerta por sonido
-        self.sound_detected = False  # Simulamos que el sonido ya no se detecta
+    def __exploration(self) -> None:
+        self.__nav.move()
 
-    def alerta2(self):
-        rospy.loginfo("Estado: ALERTA2 - Persona detectada, no puede salir de este estado.")
-        # Lógica para manejar la alerta por detección de persona
-        pass
+    def __move_to_navegation(self) -> None:
+        Map_Sections().split(2, 2)
+        graph, shape = PRM().calculate_prm()
+        self.__planner = Dijkstra_Path(graph, shape)
+
+    def __navigation(self) -> None:
+        self.__nav.compute_lasers()
+        self.__nav.move()
+        # self.__planner.calculate_dijkstra()
+        # self.__control.control()
+
+    def __manual(self) -> None:
+        self.__joystick.manual_control()
+
+    def __alert1(self) -> None:
+        self.__control.rotate()
+
+    def __alert2(self) -> None:
+        self.__nav.stop()
+        self.__buzzer_pub.publish(1)
+
+   
+    def random_move_quadrant(self, quadrants):
+        num_quadrant = len(quadrants)
+        arr_quadrant = []
+        while True:
+            num_aleatorio = random.randint(0,num_quadrant-1)  
+            if quadrants[num_aleatorio] == arr_quadrant:
+                continue
+            else:
+                print("Función que mueve el cuadrante")
+                self.__current_quadrant = quadrants[num_aleatorio]
+                self.move_to_quadrant(self.__current_quadrant )
+                arr_quadrant.append(self.__current_quadrant )
+                
+                
+                self.__last_quadrant_time = time.time()  # Guardar el tiempo actual
+                
+                tiempo_f = self.check_quadrant_time()
+                if tiempo_f >= 30:
+                    continue
+
+                if len(arr_quadrant) == num_quadrant:
+                    break
+
+    def move_to_quadrant(self, quadrant):
+        # Implementa aquí la lógica para moverse al cuadrante específico
+        print(f"Moviendo al cuadrante {quadrant}")
+
+    def check_quadrant_time(self):
+        if self.__current_quadrant is not None and self.__last_quadrant_time is not None:
+            current_time = time.time()
+            elapsed_time = current_time - self.__last_quadrant_time
+            if elapsed_time >= 30:  # Si han pasado 30 segundos
+                self.__last_quadrant_time = 0  # Reiniciar el tiempo
+                return elapsed_time
+                #print(f"Ha pasado 30 segundos en el cuadrante {self.__current_quadrant}")
+                
+
+
+    def stop(self) -> None:
+        rospy.loginfo("Stoping the State Machine Node")
+        rospy.signal_shutdown("Stoping the State Machine Node")
 
 if __name__ == "__main__":
+    rospy.init_node("StateMachine")
+    rate = rospy.Rate(rospy.get_param('/node_rate/value', default = 30))
+
     state_machine = StateMachine()
-    state_machine.run()
+    rospy.on_shutdown(state_machine.stop)
+
+    print("The State Machine is Running")
+    rospy.loginfo("Estado: EXPLORACION - Construyendo el mapa...")
+    try:    
+        while not rospy.is_shutdown():
+            state_machine.run()
+            rate.sleep()
+    except rospy.ROSInterruptException:
+        pass
